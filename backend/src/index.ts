@@ -5,26 +5,38 @@ import multer from 'multer';
 import csv from 'csv-parser';
 import { Readable } from 'stream';
 
-
 // Load environment variables
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Middleware
+// CORS Configuration
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'https://csv-importer-frontend.vercel.app',
+  'https://csv-importer-git-main-chilakala-jahnavis-projects.vercel.app',
+];
+
 app.use(cors({
-  origin: [
-    'http://localhost:3000',
-    'http://localhost:3001',
-    'https://csv-importer-frontend.vercel.app',
-    'https://csv-importer-git-main-chilakala-jahnavis-projects.vercel.app',
-    '*.vercel.app' // Allow all Vercel preview deployments
-  ],
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1 || origin.includes('vercel.app')) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  exposedHeaders: ['Content-Range', 'X-Content-Range']
 }));
+
+// Rest of your middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -32,9 +44,7 @@ app.use(express.urlencoded({ extended: true }));
 const storage = multer.memoryStorage();
 const upload = multer({
   storage: storage,
-  limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB
-  },
+  limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const ext = file.originalname.split('.').pop()?.toLowerCase();
     if (ext === 'csv') {
@@ -45,42 +55,42 @@ const upload = multer({
   }
 });
 
-// Improved CSV parser that handles inconsistent rows
+// Parse CSV function
 const parseCSV = (buffer: Buffer): Promise<any[]> => {
   return new Promise((resolve, reject) => {
-    const results: any[] = [];
-    const lines = buffer.toString().split('\n').filter(line => line.trim());
-    
-    if (lines.length === 0) {
-      resolve([]);
-      return;
-    }
-
-    // Parse headers from first line
-    const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
-    
-    // Process each data row
-    for (let i = 1; i < lines.length; i++) {
-      try {
-        const values = lines[i].split(',').map(v => v.trim().replace(/^"|"$/g, ''));
-        const row: any = {};
-        
-        // Map values to headers
-        headers.forEach((header, index) => {
-          row[header] = values[index] || '';
-        });
-        
-        // Check if row has any data
-        const hasData = Object.values(row).some(val => val !== '');
-        if (hasData) {
-          results.push(row);
-        }
-      } catch (error) {
-        console.warn(`⚠️ Skipping malformed row ${i}:`, error);
+    try {
+      const results: any[] = [];
+      const lines = buffer.toString().split('\n').filter(line => line.trim());
+      
+      if (lines.length === 0) {
+        resolve([]);
+        return;
       }
+
+      const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+      
+      for (let i = 1; i < lines.length; i++) {
+        try {
+          const values = lines[i].split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+          const row: any = {};
+          
+          headers.forEach((header, index) => {
+            row[header] = values[index] || '';
+          });
+          
+          const hasData = Object.values(row).some(val => val !== '');
+          if (hasData) {
+            results.push(row);
+          }
+        } catch (error) {
+          // Skip malformed rows
+        }
+      }
+      
+      resolve(results);
+    } catch (error) {
+      reject(new Error(`Failed to parse CSV: ${error}`));
     }
-    
-    resolve(results);
   });
 };
 
@@ -95,7 +105,7 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Preview endpoint - NO AI processing
+// Preview endpoint
 app.post('/api/preview', upload.single('file'), async (req: any, res: any) => {
   try {
     console.log('📁 Preview request received');
@@ -131,7 +141,7 @@ app.post('/api/preview', upload.single('file'), async (req: any, res: any) => {
   }
 });
 
-// Process endpoint - WITH AI processing
+// Process endpoint
 app.post('/api/process', upload.single('file'), async (req: any, res: any) => {
   try {
     console.log('🤖 Process request received');
@@ -149,43 +159,30 @@ app.post('/api/process', upload.single('file'), async (req: any, res: any) => {
 
     console.log(`🔄 Processing ${records.length} records...`);
 
-    // Process records - map to CRM format
     const processedRecords = records.map((record: any, index: number) => {
-      // Extract email from various possible column names
-      const email = record.email || record.Email || record['Email Address'] || record['E-mail'] || record.EMAIL || '';
-      
-      // Extract mobile from various possible column names
-      const mobile = record.mobile || record.Mobile || record['Phone Number'] || record['Phone'] || record.phone || record.PHONE || '';
-      
-      // Extract name from various possible column names
-      const name = record.name || record.Name || record.full_name || record['Full Name'] || record.NAME || `Lead ${index + 1}`;
-
-      // Extract created_at
-      let createdAt = record.created_at || record['Created At'] || record.CREATED_AT || record.date || record.Date || '';
-      if (!createdAt) {
-        createdAt = new Date().toISOString();
-      }
+      const email = record.email || record.Email || record['Email Address'] || '';
+      const mobile = record.mobile || record.Mobile || record['Phone Number'] || record.phone || '';
+      const name = record.name || record.Name || record.full_name || `Lead ${index + 1}`;
 
       return {
-        created_at: createdAt,
+        created_at: new Date().toISOString(),
         name: name,
         email: email,
-        country_code: record.country_code || record['Country Code'] || record.COUNTRY_CODE || '+91',
-        mobile_without_country_code: mobile.replace(/\D/g, ''), // Remove non-digit characters
-        company: record.company || record.Company || record.COMPANY || '',
-        city: record.city || record.City || record.CITY || '',
-        state: record.state || record.State || record.STATE || '',
-        country: record.country || record.Country || record.COUNTRY || 'India',
-        lead_owner: record.lead_owner || record['Lead Owner'] || record.LEAD_OWNER || '',
+        country_code: record.country_code || record['Country Code'] || '+91',
+        mobile_without_country_code: mobile.replace(/\D/g, ''),
+        company: record.company || record.Company || '',
+        city: record.city || record.City || '',
+        state: record.state || record.State || '',
+        country: record.country || record.Country || 'India',
+        lead_owner: record.lead_owner || record['Lead Owner'] || '',
         crm_status: 'GOOD_LEAD_FOLLOW_UP',
-        crm_note: record.crm_note || record['CRM Note'] || record.CRM_NOTE || record.notes || record.Notes || '',
+        crm_note: record.crm_note || record['CRM Note'] || '',
         data_source: '',
         possession_time: '',
-        description: record.description || record.Description || record.DESCRIPTION || ''
+        description: record.description || record.Description || ''
       };
     });
 
-    // Filter out records without email or mobile
     const validRecords = processedRecords.filter(record => 
       record.email || record.mobile_without_country_code
     );
