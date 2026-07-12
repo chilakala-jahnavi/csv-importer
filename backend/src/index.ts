@@ -11,32 +11,32 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// ==================== CORS CONFIGURATION ====================
-const allowedOrigins = [
-  'http://localhost:3000',
-  'http://localhost:3001',
-  'https://csv-importer-frontend.vercel.app',
-  'https://csv-importer-git-main-chilakala-jahnavis-projects.vercel.app',
-  'https://csv-importer.vercel.app',
-  // Add any other Vercel preview URLs
-];
+// ==================== UNIVERSAL CORS CONFIGURATION ====================
+// This handles CORS for all requests including preflight OPTIONS
+app.use((req, res, next) => {
+  // Allow all origins - this is the most permissive setting
+  res.header('Access-Control-Allow-Origin', '*');
+  // Allow all methods
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  // Allow all headers
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  // Allow credentials
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
+  // Handle preflight requests immediately
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(200);
+  } else {
+    next();
+  }
+});
 
+// Also use the cors middleware for additional safety
 app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) !== -1 || origin.includes('vercel.app')) {
-      callback(null, true);
-    } else {
-      console.log('❌ Blocked by CORS:', origin);
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
+  origin: '*',
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  exposedHeaders: ['Content-Range', 'X-Content-Range']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 
 // ==================== MIDDLEWARE ====================
@@ -113,7 +113,8 @@ app.get('/', (req, res) => {
       process: '/api/process (POST - upload CSV with AI)'
     },
     cors: {
-      allowedOrigins: allowedOrigins
+      status: 'enabled',
+      origins: '*'
     }
   });
 });
@@ -127,7 +128,8 @@ app.get('/health', (req, res) => {
     openai: process.env.OPENAI_API_KEY ? 'enabled' : 'disabled',
     port: PORT,
     cors: {
-      allowedOrigins: allowedOrigins
+      status: 'enabled',
+      origins: '*'
     }
   });
 });
@@ -279,7 +281,7 @@ app.listen(PORT, () => {
   console.log(`🤖 OpenAI: ${process.env.OPENAI_API_KEY ? '✅ Enabled' : '⚠️  Demo Mode'}`);
   console.log(`📁 Preview: POST http://localhost:${PORT}/api/preview`);
   console.log(`🤖 Process: POST http://localhost:${PORT}/api/process`);
-  console.log(`🌐 CORS Allowed Origins:`, allowedOrigins);
+  console.log(`🌐 CORS: ✅ Enabled (Allow All Origins)`);
   console.log('\n✅ Server is ready! Press Ctrl+C to stop.\n');
 });
 
