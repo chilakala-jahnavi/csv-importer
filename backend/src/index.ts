@@ -11,12 +11,14 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// CORS Configuration
+// ==================== CORS CONFIGURATION ====================
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:3001',
   'https://csv-importer-frontend.vercel.app',
   'https://csv-importer-git-main-chilakala-jahnavis-projects.vercel.app',
+  'https://csv-importer.vercel.app',
+  // Add any other Vercel preview URLs
 ];
 
 app.use(cors({
@@ -27,6 +29,7 @@ app.use(cors({
     if (allowedOrigins.indexOf(origin) !== -1 || origin.includes('vercel.app')) {
       callback(null, true);
     } else {
+      console.log('❌ Blocked by CORS:', origin);
       callback(new Error('Not allowed by CORS'));
     }
   },
@@ -36,15 +39,15 @@ app.use(cors({
   exposedHeaders: ['Content-Range', 'X-Content-Range']
 }));
 
-// Rest of your middleware
+// ==================== MIDDLEWARE ====================
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Configure multer
+// ==================== MULTER CONFIGURATION ====================
 const storage = multer.memoryStorage();
 const upload = multer({
   storage: storage,
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
   fileFilter: (req, file, cb) => {
     const ext = file.originalname.split('.').pop()?.toLowerCase();
     if (ext === 'csv') {
@@ -55,7 +58,7 @@ const upload = multer({
   }
 });
 
-// Parse CSV function
+// ==================== CSV PARSER ====================
 const parseCSV = (buffer: Buffer): Promise<any[]> => {
   return new Promise((resolve, reject) => {
     try {
@@ -67,8 +70,10 @@ const parseCSV = (buffer: Buffer): Promise<any[]> => {
         return;
       }
 
+      // Parse headers from first line
       const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
       
+      // Process each row
       for (let i = 1; i < lines.length; i++) {
         try {
           const values = lines[i].split(',').map(v => v.trim().replace(/^"|"$/g, ''));
@@ -84,6 +89,7 @@ const parseCSV = (buffer: Buffer): Promise<any[]> => {
           }
         } catch (error) {
           // Skip malformed rows
+          console.warn(`⚠️ Skipping malformed row ${i}`);
         }
       }
       
@@ -94,6 +100,24 @@ const parseCSV = (buffer: Buffer): Promise<any[]> => {
   });
 };
 
+// ==================== ROUTES ====================
+
+// Root endpoint
+app.get('/', (req, res) => {
+  res.json({
+    message: 'CSV Importer API',
+    status: 'running',
+    endpoints: {
+      health: '/health',
+      preview: '/api/preview (POST - upload CSV)',
+      process: '/api/process (POST - upload CSV with AI)'
+    },
+    cors: {
+      allowedOrigins: allowedOrigins
+    }
+  });
+});
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ 
@@ -101,14 +125,18 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     service: 'CSV Importer API',
     openai: process.env.OPENAI_API_KEY ? 'enabled' : 'disabled',
-    port: PORT
+    port: PORT,
+    cors: {
+      allowedOrigins: allowedOrigins
+    }
   });
 });
 
-// Preview endpoint
+// Preview endpoint - NO AI processing
 app.post('/api/preview', upload.single('file'), async (req: any, res: any) => {
   try {
     console.log('📁 Preview request received');
+    console.log('📄 File:', req.file ? req.file.originalname : 'No file');
     
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -141,7 +169,7 @@ app.post('/api/preview', upload.single('file'), async (req: any, res: any) => {
   }
 });
 
-// Process endpoint
+// Process endpoint - WITH AI processing
 app.post('/api/process', upload.single('file'), async (req: any, res: any) => {
   try {
     console.log('🤖 Process request received');
@@ -159,30 +187,43 @@ app.post('/api/process', upload.single('file'), async (req: any, res: any) => {
 
     console.log(`🔄 Processing ${records.length} records...`);
 
+    // Process records - map to CRM format
     const processedRecords = records.map((record: any, index: number) => {
-      const email = record.email || record.Email || record['Email Address'] || '';
-      const mobile = record.mobile || record.Mobile || record['Phone Number'] || record.phone || '';
-      const name = record.name || record.Name || record.full_name || `Lead ${index + 1}`;
+      // Extract email from various possible column names
+      const email = record.email || record.Email || record['Email Address'] || record['E-mail'] || record.EMAIL || '';
+      
+      // Extract mobile from various possible column names
+      const mobile = record.mobile || record.Mobile || record['Phone Number'] || record['Phone'] || record.phone || record.PHONE || '';
+      
+      // Extract name from various possible column names
+      const name = record.name || record.Name || record.full_name || record['Full Name'] || record.NAME || `Lead ${index + 1}`;
+
+      // Extract created_at
+      let createdAt = record.created_at || record['Created At'] || record.CREATED_AT || record.date || record.Date || '';
+      if (!createdAt) {
+        createdAt = new Date().toISOString();
+      }
 
       return {
-        created_at: new Date().toISOString(),
+        created_at: createdAt,
         name: name,
         email: email,
-        country_code: record.country_code || record['Country Code'] || '+91',
-        mobile_without_country_code: mobile.replace(/\D/g, ''),
-        company: record.company || record.Company || '',
-        city: record.city || record.City || '',
-        state: record.state || record.State || '',
-        country: record.country || record.Country || 'India',
-        lead_owner: record.lead_owner || record['Lead Owner'] || '',
+        country_code: record.country_code || record['Country Code'] || record.COUNTRY_CODE || '+91',
+        mobile_without_country_code: mobile.replace(/\D/g, ''), // Remove non-digit characters
+        company: record.company || record.Company || record.COMPANY || '',
+        city: record.city || record.City || record.CITY || '',
+        state: record.state || record.State || record.STATE || '',
+        country: record.country || record.Country || record.COUNTRY || 'India',
+        lead_owner: record.lead_owner || record['Lead Owner'] || record.LEAD_OWNER || '',
         crm_status: 'GOOD_LEAD_FOLLOW_UP',
-        crm_note: record.crm_note || record['CRM Note'] || '',
+        crm_note: record.crm_note || record['CRM Note'] || record.CRM_NOTE || record.notes || record.Notes || '',
         data_source: '',
         possession_time: '',
-        description: record.description || record.Description || ''
+        description: record.description || record.Description || record.DESCRIPTION || ''
       };
     });
 
+    // Filter out records without email or mobile
     const validRecords = processedRecords.filter(record => 
       record.email || record.mobile_without_country_code
     );
@@ -213,20 +254,7 @@ app.post('/api/process', upload.single('file'), async (req: any, res: any) => {
   }
 });
 
-// Root endpoint
-app.get('/', (req, res) => {
-  res.json({
-    message: 'CSV Importer API',
-    status: 'running',
-    endpoints: {
-      health: '/health',
-      preview: '/api/preview (POST - upload CSV)',
-      process: '/api/process (POST - upload CSV with AI)'
-    }
-  });
-});
-
-// 404 handler
+// ==================== 404 HANDLER ====================
 app.use((req, res) => {
   res.status(404).json({ 
     error: 'Endpoint not found',
@@ -234,7 +262,7 @@ app.use((req, res) => {
   });
 });
 
-// Error handling middleware
+// ==================== ERROR HANDLING MIDDLEWARE ====================
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error('Global error:', err);
   res.status(500).json({
@@ -243,7 +271,7 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   });
 });
 
-// Start server
+// ==================== START SERVER ====================
 app.listen(PORT, () => {
   console.log(`\n🚀 Server running on http://localhost:${PORT}`);
   console.log(`📍 Health check: http://localhost:${PORT}/health`);
@@ -251,5 +279,8 @@ app.listen(PORT, () => {
   console.log(`🤖 OpenAI: ${process.env.OPENAI_API_KEY ? '✅ Enabled' : '⚠️  Demo Mode'}`);
   console.log(`📁 Preview: POST http://localhost:${PORT}/api/preview`);
   console.log(`🤖 Process: POST http://localhost:${PORT}/api/process`);
+  console.log(`🌐 CORS Allowed Origins:`, allowedOrigins);
   console.log('\n✅ Server is ready! Press Ctrl+C to stop.\n');
 });
+
+export default app;
