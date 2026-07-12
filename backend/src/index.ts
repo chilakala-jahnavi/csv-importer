@@ -5,6 +5,7 @@ import multer from 'multer';
 import csv from 'csv-parser';
 import { Readable } from 'stream';
 
+
 // Load environment variables
 dotenv.config();
 
@@ -17,7 +18,8 @@ app.use(cors({
     'http://localhost:3000',
     'http://localhost:3001',
     'https://csv-importer-frontend.vercel.app',
-    'https://your-frontend-url.vercel.app' // Replace with your actual frontend URL
+    'https://csv-importer-git-main-chilakala-jahnavis-projects.vercel.app',
+    '*.vercel.app' // Allow all Vercel preview deployments
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
